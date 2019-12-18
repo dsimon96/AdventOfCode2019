@@ -1,0 +1,9 @@
+[package]
+name = "day5"
+version = "0.1.0"
+authors = ["David Simon <dsimon@fb.com>"]
+edition = "2018"
+
+[dependencies]
+permutohedron = "0.2.4"
+

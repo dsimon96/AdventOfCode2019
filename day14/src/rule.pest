@@ -1,0 +1,14 @@
+WHITESPACE = _{ " " }
+yields = _{ "=>" }
+sep = _{ "," }
+
+sym = @{ ASCII_ALPHA+ }
+num = @{ ASCII_DIGIT+ }
+
+component = { num ~ sym }
+component_list = _{ (component ~ sep ~ component_list | component) }
+
+inputs = { component_list }
+output = { component }
+
+rule = _{ inputs ~ yields ~ output }
