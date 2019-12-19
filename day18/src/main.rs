@@ -6,7 +6,7 @@ struct Map {
     height: usize,
     width: usize,
     num_keys: usize,
-    init_pos: (usize, usize),
+    init_pos: Vec<(usize, usize)>,
     walkable: HashSet<(usize, usize)>,
     key_loc: HashMap<char, (usize, usize)>,
     loc_key: HashMap<(usize, usize), char>,
@@ -19,7 +19,7 @@ fn parse_map(input: &[Vec<char>]) -> Map {
         height: input.len(),
         width: input[0].len(),
         num_keys: 0,
-        init_pos: (0, 0),
+        init_pos: Vec::new(),
         walkable: HashSet::new(),
         key_loc: HashMap::new(),
         loc_key: HashMap::new(),
@@ -36,7 +36,7 @@ fn parse_map(input: &[Vec<char>]) -> Map {
                 }
                 '@' => {
                     res.walkable.insert((r, c));
-                    res.init_pos = (r, c);
+                    res.init_pos.push((r, c));
                 }
                 'a'..='z' => {
                     res.walkable.insert((r, c));
@@ -61,7 +61,7 @@ fn parse_map(input: &[Vec<char>]) -> Map {
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 enum Node {
-    Start,
+    Start(usize),
     Door(char),
     Key(char),
 }
@@ -128,8 +128,10 @@ fn path_map(map: &Map) -> Graph {
         adj: HashMap::new(),
     };
 
-    g.node_loc.insert(Node::Start, map.init_pos);
-    g.loc_node.insert(map.init_pos, Node::Start);
+    for (i, &pos) in map.init_pos.iter().enumerate() {
+        g.node_loc.insert(Node::Start(i), pos);
+        g.loc_node.insert(pos, Node::Start(i));
+    }
 
     for (&ch, &pos) in &map.key_loc {
         g.node_loc.insert(Node::Key(ch), pos);
@@ -150,7 +152,7 @@ fn path_map(map: &Map) -> Graph {
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 struct State {
-    pos: Node,
+    pos: Vec<Node>,
     keys: BTreeSet<char>,
 }
 
@@ -161,17 +163,34 @@ fn main() {
         .map(|l| l.unwrap().chars().collect())
         .collect();
 
-    let map = parse_map(&input);
+    let mut map = parse_map(&input);
+    let (r, c) = map.init_pos.pop().unwrap();
+
+    map.walkable.remove(&(r, c));
+    map.walkable.remove(&(r - 1, c));
+    map.walkable.remove(&(r + 1, c));
+    map.walkable.remove(&(r, c - 1));
+    map.walkable.remove(&(r, c + 1));
+
+    map.init_pos.push((r - 1, c - 1));
+    map.init_pos.push((r - 1, c + 1));
+    map.init_pos.push((r + 1, c - 1));
+    map.init_pos.push((r + 1, c + 1));
+
     let routes = path_map(&map);
 
     let mut handled: HashSet<State> = HashSet::new();
     let mut seen: HashMap<State, usize> = HashMap::new();
     let mut queue: BinaryHeap<Reverse<(usize, State)>> = BinaryHeap::new();
 
-    let init_state = State {
-        pos: Node::Start,
+    let mut init_state = State {
+        pos: Vec::new(),
         keys: BTreeSet::new(),
     };
+    init_state.pos.push(Node::Start(0));
+    init_state.pos.push(Node::Start(1));
+    init_state.pos.push(Node::Start(2));
+    init_state.pos.push(Node::Start(3));
 
     seen.insert(init_state.clone(), 0);
     queue.push(Reverse((0, init_state)));
@@ -185,32 +204,35 @@ fn main() {
             return;
         }
 
-        for (npos, n) in routes.adj.get(&s.pos).unwrap() {
-            let mut ns = State {
-                pos: npos.clone(),
-                keys: s.keys.clone(),
-            };
+        for (i, rpos) in s.pos.iter().enumerate() {
+            for (npos, n) in routes.adj.get(rpos).unwrap() {
+                let mut ns = State {
+                    pos: s.pos.clone(),
+                    keys: s.keys.clone(),
+                };
+                ns.pos[i] = npos.clone();
 
-            if let Node::Door(ch) = npos {
-                if !s.keys.contains(ch) {
+                if let Node::Door(ch) = npos {
+                    if !s.keys.contains(ch) {
+                        continue;
+                    }
+                }
+
+                if let Node::Key(ch) = npos {
+                    ns.keys.insert(*ch);
+                }
+
+                let new_dist = steps + n;
+                let dist = seen.entry(ns.clone()).or_insert(new_dist);
+
+                if new_dist > *dist {
                     continue;
                 }
+
+                *dist = new_dist;
+
+                queue.push(Reverse((new_dist, ns)));
             }
-
-            if let Node::Key(ch) = npos {
-                ns.keys.insert(*ch);
-            }
-
-            let new_dist = steps + n;
-            let dist = seen.entry(ns.clone()).or_insert(new_dist);
-
-            if new_dist > *dist {
-                continue;
-            }
-
-            *dist = new_dist;
-
-            queue.push(Reverse((new_dist, ns)));
         }
     }
 }
