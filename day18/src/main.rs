@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::io::{stdin, BufRead};
 
 struct Map {
@@ -12,13 +12,6 @@ struct Map {
     loc_key: HashMap<(usize, usize), char>,
     door_loc: HashMap<char, (usize, usize)>,
     loc_door: HashMap<(usize, usize), char>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-struct State {
-    num_steps: usize,
-    prev: Option<char>,
-    keys: BTreeSet<char>,
 }
 
 fn parse_map(input: &[Vec<char>]) -> Map {
@@ -66,86 +59,99 @@ fn parse_map(input: &[Vec<char>]) -> Map {
     res
 }
 
-fn init_state() -> State {
-    State {
-        num_steps: 0,
-        prev: None,
-        keys: BTreeSet::new(),
-    }
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+enum Node {
+    Start,
+    Door(char),
+    Key(char),
 }
 
-fn next_states(map: &Map, s: State) -> Vec<State> {
-    let init_pos = match s.prev {
-        None => map.init_pos,
-        Some(ch) => *map.key_loc.get(&ch).unwrap(),
-    };
-    let init_steps = s.num_steps;
+#[derive(Debug)]
+struct Graph {
+    node_loc: HashMap<Node, (usize, usize)>,
+    loc_node: HashMap<(usize, usize), Node>,
+    adj: HashMap<Node, Vec<(Node, usize)>>,
+}
 
+fn do_dijkstra(
+    map: &Map,
+    s: &Node,
+    pos: &(usize, usize),
+    loc_node: &HashMap<(usize, usize), Node>,
+    adj: &mut HashMap<Node, Vec<(Node, usize)>>,
+) {
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     let mut queue: VecDeque<((usize, usize), usize)> = VecDeque::new();
 
-    seen.insert(init_pos);
-    queue.push_back((init_pos, init_steps));
+    seen.insert(*pos);
+    queue.push_back((*pos, 0));
 
-    let mut res: Vec<State> = Vec::new();
-
-    while let Some(((r, c), steps)) = queue.pop_front() {
-        // check if we got a key
-        if let Some(nk) = map.loc_key.get(&(r, c)) {
-            if !s.keys.contains(nk) {
-                let mut ns = State {
-                    num_steps: steps,
-                    prev: Some(*nk),
-                    keys: s.keys.clone(),
-                };
-
-                ns.keys.insert(*nk);
-
-                res.push(ns);
-                // we'll continue from this key in the outer search
+    while let Some((p, steps)) = queue.pop_front() {
+        if steps > 0 {
+            if let Some(t) = loc_node.get(&p) {
+                adj.entry(s.clone()).or_default().push((t.clone(), steps));
                 continue;
             }
         }
 
-        let mut nps: Vec<(usize, usize)> = Vec::new();
+        // add adjacent positions
+        let (r, c) = p;
+        let mut pos: Vec<(usize, usize)> = Vec::new();
         if r > 0 {
-            nps.push((r - 1, c))
+            pos.push((r - 1, c));
         }
         if c > 0 {
-            nps.push((r, c - 1))
+            pos.push((r, c - 1));
         }
         if r + 1 < map.height {
-            nps.push((r + 1, c))
+            pos.push((r + 1, c));
         }
         if c + 1 < map.width {
-            nps.push((r, c + 1))
+            pos.push((r, c + 1));
         }
 
-        for np in nps {
-            // check if we've been there before
-            if seen.contains(&np) {
+        for np in &pos {
+            if seen.contains(np) || !map.walkable.contains(np) {
                 continue;
             }
 
-            // check for wall
-            if !map.walkable.contains(&np) {
-                continue;
-            }
-
-            // check for door that we can't unlock
-            if let Some(ch) = map.loc_door.get(&np) {
-                if !s.keys.contains(&ch) {
-                    continue;
-                }
-            }
-
-            // position is good
-            seen.insert(np);
-            queue.push_back((np, steps + 1));
+            seen.insert(*np);
+            queue.push_back((*np, steps + 1));
         }
     }
+}
 
-    res
+fn path_map(map: &Map) -> Graph {
+    let mut g = Graph {
+        node_loc: HashMap::new(),
+        loc_node: HashMap::new(),
+        adj: HashMap::new(),
+    };
+
+    g.node_loc.insert(Node::Start, map.init_pos);
+    g.loc_node.insert(map.init_pos, Node::Start);
+
+    for (&ch, &pos) in &map.key_loc {
+        g.node_loc.insert(Node::Key(ch), pos);
+        g.loc_node.insert(pos, Node::Key(ch));
+    }
+
+    for (&ch, &pos) in &map.door_loc {
+        g.node_loc.insert(Node::Door(ch), pos);
+        g.loc_node.insert(pos, Node::Door(ch));
+    }
+
+    for (v, pos) in &g.node_loc {
+        do_dijkstra(&map, v, pos, &g.loc_node, &mut g.adj);
+    }
+
+    g
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+struct State {
+    pos: Node,
+    keys: BTreeSet<char>,
 }
 
 fn main() {
@@ -155,25 +161,56 @@ fn main() {
         .map(|l| l.unwrap().chars().collect())
         .collect();
 
-    // find all unreachable
     let map = parse_map(&input);
-    let state = init_state();
+    let routes = path_map(&map);
 
-    let mut seen: HashSet<(Option<char>, BTreeSet<char>)> = HashSet::new();
-    let mut queue = BinaryHeap::new();
+    let mut handled: HashSet<State> = HashSet::new();
+    let mut seen: HashMap<State, usize> = HashMap::new();
+    let mut queue: BinaryHeap<Reverse<(usize, State)>> = BinaryHeap::new();
 
-    seen.insert((state.prev, state.keys.clone()));
-    queue.push(Reverse(state));
+    let init_state = State {
+        pos: Node::Start,
+        keys: BTreeSet::new(),
+    };
 
-    while let Some(Reverse(s)) = queue.pop() {
+    seen.insert(init_state.clone(), 0);
+    queue.push(Reverse((0, init_state)));
+    while let Some(Reverse((steps, s))) = queue.pop() {
+        if !handled.insert(s.clone()) {
+            continue;
+        }
+
         if s.keys.len() == map.num_keys {
-            println!("{}", s.num_steps);
+            println!("{}", steps);
             return;
         }
 
-        for ns in next_states(&map, s) {
-            seen.insert((ns.prev, ns.keys.clone()));
-            queue.push(Reverse(ns));
+        for (npos, n) in routes.adj.get(&s.pos).unwrap() {
+            let mut ns = State {
+                pos: npos.clone(),
+                keys: s.keys.clone(),
+            };
+
+            if let Node::Door(ch) = npos {
+                if !s.keys.contains(ch) {
+                    continue;
+                }
+            }
+
+            if let Node::Key(ch) = npos {
+                ns.keys.insert(*ch);
+            }
+
+            let new_dist = steps + n;
+            let dist = seen.entry(ns.clone()).or_insert(new_dist);
+
+            if new_dist > *dist {
+                continue;
+            }
+
+            *dist = new_dist;
+
+            queue.push(Reverse((new_dist, ns)));
         }
     }
 }
